@@ -12,11 +12,11 @@ export default async function DashboardLayout({
   // 1. Protect the route (Server-side check)
   // If you haven't set up createClient in lib/supabase/server.ts yet, skip this check for now.
 
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    redirect("/login")
-  }
+  // const supabase = createClient()
+  // const { data: { user } } = await supabase.auth.getUser()
+  // if (!user) {
+  //   redirect("/login")
+  // }
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-gray-50">
