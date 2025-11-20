@@ -1,26 +1,25 @@
-import "./globals.css"
-import { Sidebar } from "@/components/layout/Sidebar"
-import { Topbar } from "@/components/layout/Topbar"
+// app/layout.tsx
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import "./globals.css";
 
-export const metadata = {
-  title: "Prepaid Manager",
-}
+const inter = Inter({ subsets: ["latin"] });
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export const metadata: Metadata = {
+  title: "Transactions Manager",
+  description: "Manage your company orders and transactions",
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
-      <body className="h-screen flex">
-        {/* SIDEBAR */}
-        <Sidebar />
-
-        {/* MAIN AREA */}
-        <div className="flex-1 flex flex-col">
-          <Topbar />
-          <main className="flex-1 overflow-auto p-4">
-            {children}
-          </main>
-        </div>
+      <body className={inter.className}>
+        {children}
       </body>
     </html>
-  )
+  );
 }
