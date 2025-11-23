@@ -1,295 +1,842 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { transactions as initialData } from "@/lib/data/transactions"
-import { companies } from "@/lib/data/companies"
-import type { Transaction } from "@/lib/types"
-
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
-import { Table, TableHeader, TableHead, TableRow, TableBody, TableCell } from "@/components/ui/table"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
+import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import { createBrowserClient } from "@supabase/ssr";
 
 import {
+  ArrowLeft,
+  Building2,
+  Filter,
+  Loader2,
+  Check,
+  AlertTriangle,
+  Plus,
+  Wallet,
+  ArrowRight,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Trash2,
+  User,
+  ArrowRightLeft,
+  ExternalLink,
+} from "lucide-react";
+
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import {
   Dialog,
-  DialogTrigger,
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
   DialogFooter,
-} from "@/components/ui/dialog"
-
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
-  SelectTrigger,
-  SelectValue,
   SelectContent,
   SelectItem,
-} from "@/components/ui/select"
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
-import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
+// --- TYPES ---
 
+type Company = {
+  id: number;
+  name: string;
+};
+
+type Transaction = {
+  id: number;
+  company_id: number | null;
+  amount: number;
+  type: "Received" | "Paid";
+  receipt_url: string | null; // storage path or old full URL
+  notes: string | null;
+  sender_name: string | null;
+  receiver_name: string | null;
+  created_at: string;
+  companies?: { name: string } | null;
+};
+
+const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+const formatMoney = (amount: number) =>
+  new Intl.NumberFormat("en-LY", {
+    style: "currency",
+    currency: "LYD",
+    maximumFractionDigits: 2,
+  }).format(amount);
+
+const PAGE_SIZE = 15;
 
 export default function TransactionsPage() {
-const [list, setList] = useState<Transaction[]>(initialData)
-  const [viewImage, setViewImage] = useState<string | null>(null)
+  const router = useRouter();
 
-  // Form state
-  const [companyId, setCompanyId] = useState("")
-  const [type, setType] = useState("Received")
-  const [amount, setAmount] = useState("")
-  const [notes, setNotes] = useState("")
+  // --- STATE ---
+  const [loading, setLoading] = useState(true);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
 
-  // Filters
-  const [filterType, setFilterType] = useState("all")
-  const [filterCompany, setFilterCompany] = useState("all")
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>("all");
+  const [page, setPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
 
-  function addTransaction() {
-    if (!companyId || !amount) return
+  // Delete confirmation modal
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 
-    const company = companies.find((c) => c.id === Number(companyId))
+  // Stats
+  const [stats, setStats] = useState({
+    totalReceived: 0,
+    totalPaid: 0,
+    balance: 0,
+  });
 
-const newTx: Transaction = {
-  id: list.length + 1,
-  companyId: Number(companyId),
-  companyName: company?.name || "",
-  type: type as "Received" | "Paid",
-  amount: Number(amount),
-  date: new Date().toISOString().slice(0, 10),
-  receipt: null,
-  notes,
-}
+  // Modal State
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Form State
+  const [newTx, setNewTx] = useState({
+    company_id: "no_company",
+    amount: "",
+    type: "Received" as "Received" | "Paid",
+    created_at: new Date().toISOString().split("T")[0],
+    notes: "",
+    sender_name: "",
+    receiver_name: "",
+  });
 
-    setList([newTx, ...list])
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
 
-    setCompanyId("")
-    setAmount("")
-    setType("Received")
-    setNotes("")
-  }
+  const [statusMessage, setStatusMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
 
-  function uploadReceipt(txId: number, file: File) {
-    const url = URL.createObjectURL(file)
+  const showStatus = (type: "success" | "error", text: string) => {
+    setStatusMessage({ type, text });
+    setTimeout(() => setStatusMessage(null), 4000);
+  };
 
-    const updated = list.map((t) =>
-      t.id === txId ? { ...t, receipt: url } : t
-    )
+  // --- DATA LOADING ---
 
-    setList(updated)
-  }
+  const loadCompanies = async () => {
+    const { data, error } = await supabase.from("companies").select("id, name").order("name");
 
-  const filteredList = list.filter((tx) => {
-    const typeMatch = filterType === "all" || tx.type === filterType
-    const companyMatch = filterCompany === "all" || tx.companyId === Number(filterCompany)
-    return typeMatch && companyMatch
-  })
+    if (error) {
+      console.error(error);
+      return;
+    }
+    if (data) setCompanies(data);
+  };
 
-  function getBadgeColor(type: string) {
-    return type === "Received"
-      ? "bg-green-200 text-green-800"
-      : "bg-red-200 text-red-800"
-  }
+  const loadStats = useCallback(async () => {
+    let query = supabase.from("transactions").select("amount, type");
+
+    if (selectedCompanyId !== "all") {
+      query = query.eq("company_id", selectedCompanyId);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    if (data) {
+      let received = 0;
+      let paid = 0;
+
+      data.forEach((tx: any) => {
+        if (tx.type === "Received") received += tx.amount;
+        else paid += tx.amount;
+      });
+
+      setStats({
+        totalReceived: received,
+        totalPaid: paid,
+        balance: received - paid,
+      });
+    }
+  }, [selectedCompanyId]);
+
+  const loadTransactions = useCallback(async () => {
+    setLoading(true);
+
+    const from = (page - 1) * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+
+    let query = supabase
+      .from("transactions")
+      .select(
+        `
+        *,
+        companies (name)
+      `,
+        { count: "exact" }
+      )
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
+    if (selectedCompanyId !== "all") {
+      query = query.eq("company_id", selectedCompanyId);
+    }
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      showStatus("error", error.message);
+      setLoading(false);
+      return;
+    }
+
+    // Map receipt_url -> signed URL if it's a storage path
+    const withSignedUrls: Transaction[] = await Promise.all(
+      (data || []).map(async (tx: any) => {
+        if (!tx.receipt_url) return tx;
+
+        // If already a full URL (old data), use as-is
+        if (typeof tx.receipt_url === "string" && tx.receipt_url.startsWith("http")) {
+          return tx;
+        }
+
+        // Otherwise treat it as a path within the "receipts" bucket
+        const { data: signed, error: signErr } = await supabase.storage
+          .from("receipts")
+          .createSignedUrl(tx.receipt_url, 60 * 60 * 24 * 7); // 7 days
+
+        if (signErr || !signed?.signedUrl) {
+          console.error("Error creating signed URL", signErr);
+          return tx;
+        }
+
+        return {
+          ...tx,
+          receipt_url: signed.signedUrl,
+        };
+      })
+    );
+
+    setTransactions(withSignedUrls);
+    setTotalCount(count || 0);
+    setLoading(false);
+  }, [page, selectedCompanyId]);
+
+  useEffect(() => {
+    loadCompanies();
+  }, []);
+
+  useEffect(() => {
+    loadTransactions();
+    loadStats();
+  }, [loadTransactions, loadStats]);
+
+  // --- HANDLERS ---
+
+  const handleCreateTransaction = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!newTx.amount) return;
+
+    setIsSubmitting(true);
+
+    try {
+      const finalCompanyId =
+        newTx.company_id === "no_company" ? null : Number(newTx.company_id || null);
+
+      // 1) Upload receipt (optional) and store ONLY PATH in DB
+      let storedReceiptPath: string | null = null;
+
+      if (receiptFile) {
+        // keep this pattern so it matches old rows created here
+        const baseFolder = finalCompanyId ? `company_${finalCompanyId}` : "no_company";
+        const filePath = `${baseFolder}/tx_${Date.now()}_${receiptFile.name}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from("receipts")
+          .upload(filePath, receiptFile);
+
+        if (uploadError) throw uploadError;
+
+        storedReceiptPath = filePath;
+      }
+
+      // 2) Insert transaction row
+      const { error: insertError } = await supabase.from("transactions").insert({
+        company_id: finalCompanyId,
+        amount: Number(newTx.amount),
+        type: newTx.type === "Received" ? "Received" : "Paid",
+        created_at: newTx.created_at,
+        notes: newTx.notes || null,
+        sender_name: newTx.sender_name || null,
+        receiver_name: newTx.receiver_name || null,
+        receipt_url: storedReceiptPath,
+      });
+
+      if (insertError) throw insertError;
+
+      showStatus("success", "Transaction added successfully");
+      setIsAddModalOpen(false);
+
+      // Reset form
+      setNewTx({
+        company_id: "no_company",
+        amount: "",
+        type: "Received",
+        created_at: new Date().toISOString().split("T")[0],
+        notes: "",
+        sender_name: "",
+        receiver_name: "",
+      });
+      setReceiptFile(null);
+
+      // Reload
+      loadTransactions();
+      loadStats();
+    } catch (err: any) {
+      console.error(err);
+      showStatus("error", err.message || "Error saving transaction");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteId) return;
+
+    const { error } = await supabase.from("transactions").delete().eq("id", deleteId);
+
+    if (error) showStatus("error", error.message);
+    else {
+      showStatus("success", "Transaction deleted");
+      loadTransactions();
+      loadStats();
+    }
+
+    setDeleteId(null);
+    setIsDeleteModalOpen(false);
+  };
+
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
+
+  // --- RENDER ---
 
   return (
-    <div className="space-y-8">
-
-      <h1 className="text-2xl font-bold">Transactions</h1>
-
-      {/* SUMMARY CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        
-        <Card>
-          <CardHeader>
-            <CardTitle>Total Received</CardTitle>
-          </CardHeader>
-          <CardContent className="text-3xl font-bold text-green-700">
-            {list
-              .filter((tx) => tx.type === "Received")
-              .reduce((sum, tx) => sum + tx.amount, 0)} LYD
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Total Paid</CardTitle>
-          </CardHeader>
-          <CardContent className="text-3xl font-bold text-red-700">
-            {list
-              .filter((tx) => tx.type === "Paid")
-              .reduce((sum, tx) => sum + tx.amount, 0)} LYD
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Balance</CardTitle>
-          </CardHeader>
-          <CardContent className="text-3xl font-bold">
-            {
-              list.reduce((balance, tx) => {
-                return tx.type === "Received"
-                  ? balance + tx.amount
-                  : balance - tx.amount
-              }, 0)
-            } LYD
-          </CardContent>
-        </Card>
-
+    <div className="flex flex-col gap-8 p-6 max-w-7xl mx-auto w-full">
+      {/* HEADER */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-2">
+            <Wallet className="h-8 w-8 text-blue-600" /> Financial Overview
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            Manage all incoming and outgoing transactions.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={() => setIsAddModalOpen(true)}
+            className="bg-blue-600 hover:bg-blue-700"
+          >
+            <Plus className="h-4 w-4 mr-2" /> Add Transaction
+          </Button>
+        </div>
       </div>
 
-      {/* HEADER WITH ADD BUTTON */}
-      <div className="flex justify-between items-center">
-        <h2 className="text-xl font-semibold">All Transactions</h2>
+      {/* STATS CARDS */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card className="bg-emerald-50 border-emerald-100">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-emerald-700">Total Received (In)</p>
+              <p className="text-2xl font-bold text-emerald-800">
+                {formatMoney(stats.totalReceived)}
+              </p>
+            </div>
+            <div className="h-10 w-10 rounded-full bg-emerald-200 flex items-center justify-center">
+              <ArrowDownLeft className="h-6 w-6 text-emerald-700" />
+            </div>
+          </CardContent>
+        </Card>
 
-        <Dialog>
-          <DialogTrigger asChild>
-            <Button>Add Transaction</Button>
-          </DialogTrigger>
+        <Card className="bg-red-50 border-red-100">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-red-700">Total Paid (Out)</p>
+              <p className="text-2xl font-bold text-red-800">
+                {formatMoney(stats.totalPaid)}
+              </p>
+            </div>
+            <div className="h-10 w-10 rounded-full bg-red-200 flex items-center justify-center">
+              <ArrowUpRight className="h-6 w-6 text-red-700" />
+            </div>
+          </CardContent>
+        </Card>
 
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add Transaction</DialogTitle>
-              <DialogDescription>Record a new transaction.</DialogDescription>
-            </DialogHeader>
+        <Card
+          className={`${
+            stats.balance >= 0
+              ? "bg-blue-50 border-blue-100"
+              : "bg-orange-50 border-orange-100"
+          }`}
+        >
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <p
+                className={`text-sm font-medium ${
+                  stats.balance >= 0 ? "text-blue-700" : "text-orange-700"
+                }`}
+              >
+                Net Balance
+              </p>
+              <p
+                className={`text-2xl font-bold ${
+                  stats.balance >= 0 ? "text-blue-800" : "text-orange-800"
+                }`}
+              >
+                {formatMoney(stats.balance)}
+              </p>
+            </div>
+            <Wallet
+              className={`h-8 w-8 ${
+                stats.balance >= 0 ? "text-blue-300" : "text-orange-300"
+              }`}
+            />
+          </CardContent>
+        </Card>
+      </div>
 
-            <div className="space-y-4 py-2">
+      {/* STATUS MESSAGE */}
+      {statusMessage && (
+        <div
+          className={`p-4 rounded-lg flex items-center gap-3 ${
+            statusMessage.type === "success"
+              ? "bg-emerald-100 text-emerald-800"
+              : "bg-red-100 text-red-800"
+          }`}
+        >
+          {statusMessage.type === "success" ? (
+            <Check className="h-5 w-5" />
+          ) : (
+            <AlertTriangle className="h-5 w-5" />
+          )}
+          <p className="text-sm font-medium">{statusMessage.text}</p>
+        </div>
+      )}
 
-              <Select onValueChange={setCompanyId} value={companyId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select Company" />
-                </SelectTrigger>
-                <SelectContent>
-                  {companies.map((c) => (
-                    <SelectItem key={c.id} value={String(c.id)}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+      {/* MAIN TABLE + FILTERS */}
+      <Card className="shadow-md border border-slate-200">
+        <CardHeader className="bg-slate-50 border-b flex flex-row items-center justify-between p-4">
+          <div className="flex items-center gap-2">
+            <Filter className="h-4 w-4 text-slate-500" />
+            <span className="font-semibold text-slate-700">Filter Transactions</span>
+          </div>
+          <div className="w-[250px]">
+            <Select
+              value={selectedCompanyId}
+              onValueChange={(val) => {
+                setSelectedCompanyId(val);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="bg-white">
+                <SelectValue placeholder="Filter by Company" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Transactions</SelectItem>
+                {companies.map((c) => (
+                  <SelectItem key={c.id} value={c.id.toString()}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </CardHeader>
 
-              <Select onValueChange={setType} defaultValue="Received">
-                <SelectTrigger>
-                  <SelectValue placeholder="Type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Received">Received</SelectItem>
-                  <SelectItem value="Paid">Paid</SelectItem>
-                </SelectContent>
-              </Select>
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="p-12 text-center">
+              <Loader2 className="h-8 w-8 animate-spin mx-auto text-blue-600" />
+            </div>
+          ) : transactions.length === 0 ? (
+            <div className="p-12 text-center text-muted-foreground">
+              No transactions found.
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader className="bg-slate-50">
+                    <TableRow>
+                      <TableHead className="w-[100px]">Date</TableHead>
+                      <TableHead className="w-[180px]">Company/Entity</TableHead>
+                      <TableHead className="w-[120px]">Transaction Flow</TableHead>
+                      <TableHead className="w-[120px]">Amount</TableHead>
+                      <TableHead className="w-[160px]">Notes</TableHead>
+                      <TableHead className="w-[120px]">Receipt</TableHead>
+                      <TableHead className="w-[50px]"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {transactions.map((tx) => (
+                      <TableRow key={tx.id}>
+                        {/* Date */}
+                        <TableCell className="font-medium text-slate-600">
+                          {new Date(tx.created_at).toLocaleDateString()}
+                        </TableCell>
 
-              <Input
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                type="number"
-                placeholder="Amount (LYD)"
-              />
+                        {/* Company / Entity */}
+                        <TableCell>
+                          {tx.companies ? (
+                            <div className="flex items-center gap-2">
+                              <Building2 className="h-4 w-4 text-slate-400" />
+                              <span
+                                className="font-medium text-blue-600 hover:underline cursor-pointer"
+                                onClick={() =>
+                                  router.push(`/companies/${tx.company_id}?tab=transactions`)
+                                }
+                              >
+                                {tx.companies.name}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 italic flex items-center gap-2">
+                              <User className="h-4 w-4" /> Independent
+                            </span>
+                          )}
+                        </TableCell>
 
-              <Textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Notes..."
-              />
+                        {/* Flow + Type */}
+                        <TableCell>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2 text-sm">
+                              <span className="font-medium text-slate-700">
+                                {tx.sender_name || "Unknown"}
+                              </span>
+                              <ArrowRight className="h-3 w-3 text-slate-400" />
+                              <span className="font-medium text-slate-700">
+                                {tx.receiver_name || "Unknown"}
+                              </span>
+                            </div>
+                            <span
+                              className={`inline-flex w-fit items-center px-2 py-0.5 rounded text-[10px] font-medium uppercase ${
+                                tx.type === "Received"
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : "bg-red-100 text-red-800"
+                              }`}
+                            >
+                              {tx.type}
+                            </span>
+                          </div>
+                        </TableCell>
 
+                        {/* Amount */}
+                        <TableCell
+                          className={`font-mono font-medium ${
+                            tx.type === "Received"
+                              ? "text-emerald-600"
+                              : "text-red-600"
+                          }`}
+                        >
+                          {tx.type === "Paid" ? "-" : "+"}
+                          {formatMoney(tx.amount)}
+                        </TableCell>
+
+                        {/* Notes */}
+                        <TableCell>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-sm text-slate-700 truncate max-w-xs">
+                              {tx.notes || ""}
+                            </span>
+                          </div>
+                        </TableCell>
+
+                        {/* Receipt */}
+                        <TableCell>
+                          {tx.receipt_url ? (
+                            <a
+                              href={tx.receipt_url}
+                              target="_blank"
+                              className="text-blue-600 underline text-sm flex items-center gap-1 hover:text-blue-700"
+                            >
+                              View <ExternalLink className="h-3 w-3" />
+                            </a>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
+                        </TableCell>
+
+                        {/* Delete button */}
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setDeleteId(tx.id);
+                              setIsDeleteModalOpen(true);
+                            }}
+                            className="h-8 w-8 text-slate-400 hover:text-red-600"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Pagination */}
+              <div className="flex items-center justify-between p-4 border-t">
+                <p className="text-sm text-slate-500">
+                  Page {page} of {totalPages} ({totalCount} transactions)
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                  >
+                    <ArrowLeft className="h-4 w-4 mr-2" /> Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                  >
+                    Next <ArrowRight className="h-4 w-4 ml-2" />
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* CREATE TRANSACTION MODAL */}
+      <Dialog open={isAddModalOpen} onOpenChange={setIsAddModalOpen}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Add Transaction</DialogTitle>
+            <DialogDescription>
+              Record money movement, drivers, and specific parties involved.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleCreateTransaction} className="space-y-4">
+            {/* Amount + Date */}
+            <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-md border border-slate-100">
+              <div className="space-y-2">
+                <Label className="text-slate-600">
+                  Amount (LYD) <span className="text-red-500">*</span>
+                </Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-slate-500"></span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    className="pl-7 font-mono text-lg"
+                    value={newTx.amount}
+                    onChange={(e) => setNewTx({ ...newTx, amount: e.target.value })}
+                    placeholder="0.00"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-slate-600">
+                  Date <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  type="date"
+                  value={newTx.created_at}
+                  onChange={(e) =>
+                    setNewTx({ ...newTx, created_at: e.target.value })
+                  }
+                  required
+                />
+              </div>
             </div>
 
-            <DialogFooter>
-              <Button onClick={addTransaction}>Save</Button>
-            </DialogFooter>
+            {/* Type + Company */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Transaction Type</Label>
+                <Select
+                  value={newTx.type}
+                  onValueChange={(val: "Received" | "Paid") =>
+                    setNewTx({ ...newTx, type: val })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Received">Money In (Received)</SelectItem>
+                    <SelectItem value="Paid">Money Out (Paid)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
 
-          </DialogContent>
-        </Dialog>
-      </div>
+              <div className="space-y-2">
+                <Label>Company (Optional)</Label>
+                <Select
+                  value={newTx.company_id}
+                  onValueChange={(val) =>
+                    setNewTx({ ...newTx, company_id: val })
+                  }
+                >
+                  <SelectTrigger className="bg-white">
+                    <SelectValue placeholder="Select Company" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem
+                      value="no_company"
+                      className="text-slate-500 font-medium"
+                    >
+                      -- No Company / Independent --
+                    </SelectItem>
+                    {companies.map((c) => (
+                      <SelectItem key={c.id} value={c.id.toString()}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
 
-      {/* FILTERS */}
-      <div className="flex flex-wrap gap-4 justify-end">
+            <div className="border-t border-slate-100 my-2"></div>
 
-        <Select onValueChange={setFilterType} defaultValue="all">
-          <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="Filter by Type" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All</SelectItem>
-            <SelectItem value="Received">Received</SelectItem>
-            <SelectItem value="Paid">Paid</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Select onValueChange={setFilterCompany} defaultValue="all">
-          <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="Filter by Company" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Companies</SelectItem>
-            {companies.map((c) => (
-              <SelectItem key={c.id} value={String(c.id)}>
-                {c.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-      </div>
-
-      {/* TABLE */}
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Date</TableHead>
-            <TableHead>Company</TableHead>
-            <TableHead>Type</TableHead>
-            <TableHead>Amount</TableHead>
-            <TableHead>Notes</TableHead>
-            <TableHead>Receipt</TableHead>
-          </TableRow>
-        </TableHeader>
-
-        <TableBody>
-          {filteredList.map((tx) => (
-            <TableRow key={tx.id}>
-              <TableCell>{tx.date}</TableCell>
-              <TableCell>{tx.companyName}</TableCell>
-              <TableCell>
-                <Badge className={getBadgeColor(tx.type)}>{tx.type}</Badge>
-              </TableCell>
-              <TableCell>{tx.amount} LYD</TableCell>
-              <TableCell>{tx.notes || "-"}</TableCell>
-
-              <TableCell>
-                {tx.receipt ? (
-                  <Avatar className="h-12 w-12 cursor-pointer">
-                    <AvatarImage 
-                      src={tx.receipt}
-                      onClick={() => setViewImage(tx.receipt!)}
-                    />
-                    <AvatarFallback>IMG</AvatarFallback>
-                  </Avatar>
-                ) : (
-                  <input
-                    type="file"
-                    accept="image/*"
+            {/* Parties */}
+            <div className="space-y-3">
+              <Label className="flex items-center gap-2 text-blue-600 font-semibold">
+                <ArrowRightLeft className="h-4 w-4" /> Transaction Parties
+              </Label>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-xs text-slate-500 uppercase tracking-wider">
+                    Sender (From)
+                  </Label>
+                  <Input
+                    placeholder="Who gave the money?"
+                    value={newTx.sender_name}
                     onChange={(e) =>
-                      e.target.files?.[0] &&
-                      uploadReceipt(tx.id, e.target.files[0])
+                      setNewTx({ ...newTx, sender_name: e.target.value })
                     }
+                    required
                   />
-                )}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs text-slate-500 uppercase tracking-wider">
+                    Receiver (To)
+                  </Label>
+                  <Input
+                    placeholder="Who got the money?"
+                    value={newTx.receiver_name}
+                    onChange={(e) =>
+                      setNewTx({ ...newTx, receiver_name: e.target.value })
+                    }
+                    required
+                  />
+                </div>
+              </div>
+            </div>
 
-      {/* IMAGE PREVIEW */}
-      <Dialog open={!!viewImage} onOpenChange={() => setViewImage(null)}>
-        <DialogContent className="max-w-lg">
-          {viewImage && <img src={viewImage} className="w-full rounded" />}
+            {/* Notes */}
+            <div className="space-y-2">
+              <Label>Description / Notes</Label>
+              <Textarea
+                value={newTx.notes}
+                onChange={(e) =>
+                  setNewTx({ ...newTx, notes: e.target.value })
+                }
+                placeholder="Any additional details..."
+                rows={2}
+              />
+            </div>
+
+            {/* Receipt upload */}
+            <div className="space-y-2">
+              <Label>Receipt (Optional)</Label>
+              <Input
+                type="file"
+                accept="image/*,application/pdf"
+                onChange={(e) => setReceiptFile(e.target.files?.[0] || null)}
+              />
+            </div>
+
+            <DialogFooter className="pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsAddModalOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={isSubmitting}
+                className="bg-blue-600 w-full md:w-auto"
+              >
+                {isSubmitting ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Check className="mr-2 h-4 w-4" />
+                )}
+                Save Transaction
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
+      {/* DELETE CONFIRMATION MODAL */}
+      <Dialog open={isDeleteModalOpen} onOpenChange={setIsDeleteModalOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle className="text-red-600">Confirm Delete</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this transaction? This action cannot be
+              undone.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex justify-end gap-3 pt-4">
+            <Button variant="outline" onClick={() => setIsDeleteModalOpen(false)}>
+              Cancel
+            </Button>
+
+            <Button
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={confirmDelete}
+            >
+              Delete
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
-  )
+  );
 }

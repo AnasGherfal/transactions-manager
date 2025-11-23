@@ -1,21 +1,18 @@
+// app/api/companies/add/route.ts
 import { NextResponse } from "next/server"
-import { supabaseServer } from "@/lib/supabase/server"
+import { createClient } from "@supabase/supabase-js";
 
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_KEY! 
+);
 export async function POST(req: Request) {
   try {
     const body = await req.json()
 
-    const {
-      name,
-      email,
-      phone,
-      percent_cut,
-      address,
-      google_maps_url,
-      notes
-    } = body
+    const { name, email, phone, percent_cut, address, google_maps_url, notes } = body
 
-    // try to extract coordinates from google maps link
+    // Try to extract coordinates from google maps link
     let latitude = null
     let longitude = null
 
@@ -27,7 +24,7 @@ export async function POST(req: Request) {
       }
     }
 
-    const { data, error } = await supabaseServer
+    const { data, error } = await supabase
       .from("companies")
       .insert({
         name,
