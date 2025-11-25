@@ -356,7 +356,8 @@ export default function CompanyDetailsPage() {
             if (fileError) throw new Error(`File download failed: ${fileError.message}`);
             
             // 2. Convert ArrayBuffer to Base64
-            const base64Data = arrayBufferToBase64(fileData);
+const arrayBuffer = await fileData.arrayBuffer();
+const base64Data = arrayBufferToBase64(arrayBuffer);
             
             // 3. Construct Email Details
             const attachmentFilename = order.receipt_url.split('/').pop() || `Order_${order.id}_File.pdf`;

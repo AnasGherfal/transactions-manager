@@ -145,7 +145,9 @@ export default function AddOrderModal({
             }
 
             // Success handling
-            showStatus('success', `Order #${result.orderId} created successfully.`)
+if (result.order) {
+    showStatus('success', `Order #${result.order.id} created successfully.`);
+}
             
             // Notify parent component
             if (onOrderAdded) {
