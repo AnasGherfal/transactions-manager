@@ -7,7 +7,6 @@ import {
   Loader2, 
   Mail, 
   Lock, 
-  CheckCircle2, 
   AlertCircle, 
   CreditCard, 
   TrendingUp,
@@ -23,13 +22,11 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 export default function LoginPage() {
   const router = useRouter();
   
-  // State
-  const [mode, setMode] = useState<"login" | "register">("login");
+  // State - Removed 'mode' and 'successMsg' as we are Login only now
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -40,47 +37,25 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setErrorMsg(null);
-    setSuccessMsg(null);
 
     try {
-      if (mode === "login") {
-        // --- LOGIN LOGIC ---
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
+      // --- LOGIN LOGIC ONLY ---
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-        if (error) throw error;
+      if (error) throw error;
 
-        router.refresh();
-        router.push("/");
-      } else {
-        // --- REGISTER LOGIC ---
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            emailRedirectTo: `${location.origin}/auth/callback`,
-          },
-        });
-
-        if (error) throw error;
-        
-        setSuccessMsg("Account created! Check your email to confirm.");
-        setMode("login"); 
-      }
+      router.refresh();
+      router.push("/");
+      
     } catch (error: any) {
       console.error("Auth error:", error.message);
       setErrorMsg(error.message || "An error occurred during authentication.");
     } finally {
       setLoading(false);
     }
-  };
-
-  const toggleMode = () => {
-    setMode(mode === "login" ? "register" : "login");
-    setErrorMsg(null);
-    setSuccessMsg(null);
   };
 
   return (
@@ -135,12 +110,10 @@ export default function LoginPage() {
         <Card className="w-full max-w-[400px] border-0 shadow-xl sm:border sm:shadow-sm">
           <CardHeader className="space-y-1 text-center sm:text-left">
             <CardTitle className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-              {mode === "login" ? "Financial Portal" : "Partner Access"}
+              Financial Portal
             </CardTitle>
             <CardDescription>
-              {mode === "login" 
-                ? "Sign in to access your dashboard and reports" 
-                : "Create a secure account to start tracking"}
+              Sign in to access your dashboard and reports
             </CardDescription>
           </CardHeader>
           
@@ -152,14 +125,6 @@ export default function LoginPage() {
                 <div className="p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md flex items-start gap-2 animate-in fade-in slide-in-from-top-1">
                   <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
                   <span>{errorMsg}</span>
-                </div>
-              )}
-
-              {/* SUCCESS MESSAGE */}
-              {successMsg && (
-                <div className="p-3 text-sm text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-md flex items-start gap-2 animate-in fade-in slide-in-from-top-1">
-                  <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
-                  <span>{successMsg}</span>
                 </div>
               )}
 
@@ -186,15 +151,13 @@ export default function LoginPage() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label htmlFor="password">Password</Label>
-                  {mode === "login" && (
-                    <button 
-                      type="button"
-                      className="text-xs text-blue-600 underline-offset-4 hover:underline"
-                      onClick={() => alert("Contact admin for password reset")}
-                    >
-                      Forgot password?
-                    </button>
-                  )}
+                  <button 
+                    type="button"
+                    className="text-xs text-blue-600 underline-offset-4 hover:underline"
+                    onClick={() => alert("Contact admin for password reset")}
+                  >
+                    Forgot password?
+                  </button>
                 </div>
                 <div className="relative">
                   <Lock className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
@@ -214,7 +177,7 @@ export default function LoginPage() {
 
               <Button className="w-full bg-slate-900 hover:bg-slate-800" type="submit" disabled={loading}>
                 {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {mode === "login" ? "Access Dashboard" : "Register Account"}
+                Access Dashboard
               </Button>
             </form>
 
@@ -232,13 +195,10 @@ export default function LoginPage() {
 
           <CardFooter className="flex flex-col space-y-2 text-center">
             <div className="text-sm text-muted-foreground">
-              {mode === "login" ? "New system user? " : "Already have credentials? "}
-              <button
-                className="text-blue-600 font-medium underline-offset-4 transition-colors hover:underline"
-                onClick={toggleMode}
-              >
-                {mode === "login" ? "Request Access" : "Log in"}
-              </button>
+              New system user?{" "}
+              <span className="text-slate-500 font-medium">
+                Contact your administrator for access keys.
+              </span>
             </div>
           </CardFooter>
         </Card>

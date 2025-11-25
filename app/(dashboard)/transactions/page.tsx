@@ -20,6 +20,7 @@ import {
   User,
   ArrowRightLeft,
   ExternalLink,
+  Pencil, // Added Pencil icon
 } from "lucide-react";
 
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -109,11 +110,12 @@ export default function TransactionsPage() {
   });
 
   // Modal State
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false); // Renamed from isAddModalOpen
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null); // NEW: Track edit mode
 
   // Form State
-  const [newTx, setNewTx] = useState({
+  const [formData, setFormData] = useState({
     company_id: "no_company",
     amount: "",
     type: "Received" as "Received" | "Paid",
@@ -249,24 +251,55 @@ export default function TransactionsPage() {
     loadStats();
   }, [loadTransactions, loadStats]);
 
+  // --- HELPERS FOR MODAL ---
+
+  const openAddModal = () => {
+    setEditingId(null);
+    setFormData({
+      company_id: "no_company",
+      amount: "",
+      type: "Received",
+      created_at: new Date().toISOString().split("T")[0],
+      notes: "",
+      sender_name: "",
+      receiver_name: "",
+    });
+    setReceiptFile(null);
+    setIsModalOpen(true);
+  };
+
+  const openEditModal = (tx: Transaction) => {
+    setEditingId(tx.id);
+    setFormData({
+      company_id: tx.company_id ? tx.company_id.toString() : "no_company",
+      amount: tx.amount.toString(),
+      type: tx.type,
+      created_at: tx.created_at.split("T")[0], // Extract YYYY-MM-DD
+      notes: tx.notes || "",
+      sender_name: tx.sender_name || "",
+      receiver_name: tx.receiver_name || "",
+    });
+    setReceiptFile(null); // Reset file input (user only uploads if they want to CHANGE it)
+    setIsModalOpen(true);
+  };
+
   // --- HANDLERS ---
 
-  const handleCreateTransaction = async (e: React.FormEvent) => {
+  const handleSaveTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!newTx.amount) return;
+    if (!formData.amount) return;
 
     setIsSubmitting(true);
 
     try {
       const finalCompanyId =
-        newTx.company_id === "no_company" ? null : Number(newTx.company_id || null);
+        formData.company_id === "no_company" ? null : Number(formData.company_id || null);
 
-      // 1) Upload receipt (optional) and store ONLY PATH in DB
+      // 1) Upload receipt (optional)
       let storedReceiptPath: string | null = null;
 
       if (receiptFile) {
-        // keep this pattern so it matches old rows created here
         const baseFolder = finalCompanyId ? `company_${finalCompanyId}` : "no_company";
         const filePath = `${baseFolder}/tx_${Date.now()}_${receiptFile.name}`;
 
@@ -279,34 +312,46 @@ export default function TransactionsPage() {
         storedReceiptPath = filePath;
       }
 
-      // 2) Insert transaction row
-      const { error: insertError } = await supabase.from("transactions").insert({
+      // 2) Prepare payload
+      const payload: any = {
         company_id: finalCompanyId,
-        amount: Number(newTx.amount),
-        type: newTx.type === "Received" ? "Received" : "Paid",
-        created_at: newTx.created_at,
-        notes: newTx.notes || null,
-        sender_name: newTx.sender_name || null,
-        receiver_name: newTx.receiver_name || null,
-        receipt_url: storedReceiptPath,
-      });
+        amount: Number(formData.amount),
+        type: formData.type === "Received" ? "Received" : "Paid",
+        created_at: formData.created_at,
+        notes: formData.notes || null,
+        sender_name: formData.sender_name || null,
+        receiver_name: formData.receiver_name || null,
+      };
 
-      if (insertError) throw insertError;
+      // Only update receipt_url if a new file was uploaded
+      if (storedReceiptPath) {
+        payload.receipt_url = storedReceiptPath;
+      }
 
-      showStatus("success", "Transaction added successfully");
-      setIsAddModalOpen(false);
+      let error;
 
-      // Reset form
-      setNewTx({
-        company_id: "no_company",
-        amount: "",
-        type: "Received",
-        created_at: new Date().toISOString().split("T")[0],
-        notes: "",
-        sender_name: "",
-        receiver_name: "",
-      });
-      setReceiptFile(null);
+      if (editingId) {
+        // --- UPDATE MODE ---
+        const { error: updateError } = await supabase
+          .from("transactions")
+          .update(payload)
+          .eq("id", editingId);
+        error = updateError;
+      } else {
+        // --- CREATE MODE ---
+        // Ensure receipt_url is null if not provided during create
+        if (!storedReceiptPath) payload.receipt_url = null;
+        
+        const { error: insertError } = await supabase
+          .from("transactions")
+          .insert(payload);
+        error = insertError;
+      }
+
+      if (error) throw error;
+
+      showStatus("success", `Transaction ${editingId ? "updated" : "added"} successfully`);
+      setIsModalOpen(false);
 
       // Reload
       loadTransactions();
@@ -353,7 +398,7 @@ export default function TransactionsPage() {
         </div>
         <div className="flex items-center gap-2">
           <Button
-            onClick={() => setIsAddModalOpen(true)}
+            onClick={openAddModal}
             className="bg-blue-600 hover:bg-blue-700"
           >
             <Plus className="h-4 w-4 mr-2" /> Add Transaction
@@ -493,7 +538,7 @@ export default function TransactionsPage() {
                       <TableHead className="w-[120px]">Amount</TableHead>
                       <TableHead className="w-[160px]">Notes</TableHead>
                       <TableHead className="w-[120px]">Receipt</TableHead>
-                      <TableHead className="w-[50px]"></TableHead>
+                      <TableHead className="w-[100px]">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -530,11 +575,11 @@ export default function TransactionsPage() {
                           <div className="flex flex-col gap-1">
                             <div className="flex items-center gap-2 text-sm">
                               <span className="font-medium text-slate-700">
-                                {tx.sender_name || "Unknown"}
+                                {tx.sender_name || "?"}
                               </span>
                               <ArrowRight className="h-3 w-3 text-slate-400" />
                               <span className="font-medium text-slate-700">
-                                {tx.receiver_name || "Unknown"}
+                                {tx.receiver_name || "?"}
                               </span>
                             </div>
                             <span
@@ -585,19 +630,30 @@ export default function TransactionsPage() {
                           )}
                         </TableCell>
 
-                        {/* Delete button */}
+                        {/* Actions: Edit & Delete */}
                         <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => {
-                              setDeleteId(tx.id);
-                              setIsDeleteModalOpen(true);
-                            }}
-                            className="h-8 w-8 text-slate-400 hover:text-red-600"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openEditModal(tx)}
+                              className="h-8 w-8 text-slate-400 hover:text-blue-600"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => {
+                                setDeleteId(tx.id);
+                                setIsDeleteModalOpen(true);
+                              }}
+                              className="h-8 w-8 text-slate-400 hover:text-red-600"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -634,17 +690,21 @@ export default function TransactionsPage() {
         </CardContent>
       </Card>
 
-      {/* CREATE TRANSACTION MODAL */}
-      <Dialog open={isAddModalOpen} onOpenChange={setIsAddModalOpen}>
+      {/* CREATE / EDIT TRANSACTION MODAL */}
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
         <DialogContent className="sm:max-w-[600px]">
           <DialogHeader>
-            <DialogTitle>Add Transaction</DialogTitle>
+            <DialogTitle>
+              {editingId ? "Edit Transaction" : "Add Transaction"}
+            </DialogTitle>
             <DialogDescription>
-              Record money movement, drivers, and specific parties involved.
+              {editingId
+                ? "Update details for this transaction."
+                : "Record money movement, drivers, and specific parties involved."}
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={handleCreateTransaction} className="space-y-4">
+          <form onSubmit={handleSaveTransaction} className="space-y-4">
             {/* Amount + Date */}
             <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-md border border-slate-100">
               <div className="space-y-2">
@@ -657,8 +717,8 @@ export default function TransactionsPage() {
                     type="number"
                     step="0.01"
                     className="pl-7 font-mono text-lg"
-                    value={newTx.amount}
-                    onChange={(e) => setNewTx({ ...newTx, amount: e.target.value })}
+                    value={formData.amount}
+                    onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
                     placeholder="0.00"
                     required
                   />
@@ -670,9 +730,9 @@ export default function TransactionsPage() {
                 </Label>
                 <Input
                   type="date"
-                  value={newTx.created_at}
+                  value={formData.created_at}
                   onChange={(e) =>
-                    setNewTx({ ...newTx, created_at: e.target.value })
+                    setFormData({ ...formData, created_at: e.target.value })
                   }
                   required
                 />
@@ -684,9 +744,9 @@ export default function TransactionsPage() {
               <div className="space-y-2">
                 <Label>Transaction Type</Label>
                 <Select
-                  value={newTx.type}
+                  value={formData.type}
                   onValueChange={(val: "Received" | "Paid") =>
-                    setNewTx({ ...newTx, type: val })
+                    setFormData({ ...formData, type: val })
                   }
                 >
                   <SelectTrigger>
@@ -702,9 +762,9 @@ export default function TransactionsPage() {
               <div className="space-y-2">
                 <Label>Company (Optional)</Label>
                 <Select
-                  value={newTx.company_id}
+                  value={formData.company_id}
                   onValueChange={(val) =>
-                    setNewTx({ ...newTx, company_id: val })
+                    setFormData({ ...formData, company_id: val })
                   }
                 >
                   <SelectTrigger className="bg-white">
@@ -741,9 +801,9 @@ export default function TransactionsPage() {
                   </Label>
                   <Input
                     placeholder="Who gave the money?"
-                    value={newTx.sender_name}
+                    value={formData.sender_name}
                     onChange={(e) =>
-                      setNewTx({ ...newTx, sender_name: e.target.value })
+                      setFormData({ ...formData, sender_name: e.target.value })
                     }
                     required
                   />
@@ -754,9 +814,9 @@ export default function TransactionsPage() {
                   </Label>
                   <Input
                     placeholder="Who got the money?"
-                    value={newTx.receiver_name}
+                    value={formData.receiver_name}
                     onChange={(e) =>
-                      setNewTx({ ...newTx, receiver_name: e.target.value })
+                      setFormData({ ...formData, receiver_name: e.target.value })
                     }
                     required
                   />
@@ -768,9 +828,9 @@ export default function TransactionsPage() {
             <div className="space-y-2">
               <Label>Description / Notes</Label>
               <Textarea
-                value={newTx.notes}
+                value={formData.notes}
                 onChange={(e) =>
-                  setNewTx({ ...newTx, notes: e.target.value })
+                  setFormData({ ...formData, notes: e.target.value })
                 }
                 placeholder="Any additional details..."
                 rows={2}
@@ -779,19 +839,26 @@ export default function TransactionsPage() {
 
             {/* Receipt upload */}
             <div className="space-y-2">
-              <Label>Receipt (Optional)</Label>
+              <Label>
+                {editingId ? "Replace Receipt (Optional)" : "Receipt (Optional)"}
+              </Label>
               <Input
                 type="file"
                 accept="image/*,application/pdf"
                 onChange={(e) => setReceiptFile(e.target.files?.[0] || null)}
               />
+              {editingId && (
+                <p className="text-xs text-muted-foreground">
+                  Leave empty to keep existing receipt.
+                </p>
+              )}
             </div>
 
             <DialogFooter className="pt-4">
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setIsAddModalOpen(false)}
+                onClick={() => setIsModalOpen(false)}
               >
                 Cancel
               </Button>
@@ -805,7 +872,7 @@ export default function TransactionsPage() {
                 ) : (
                   <Check className="mr-2 h-4 w-4" />
                 )}
-                Save Transaction
+                {editingId ? "Update Transaction" : "Save Transaction"}
               </Button>
             </DialogFooter>
           </form>

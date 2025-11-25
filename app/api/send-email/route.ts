@@ -1,44 +1,81 @@
-import { NextResponse } from "next/server"
-import { Resend } from "resend"
+import { NextRequest, NextResponse } from 'next/server';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Note: In a real environment, you would use a package like 'resend'
+// but for this example, we simulate the fetch call to the Resend API.
 
-export async function POST(req: Request) {
+// Define the expected structure for the POST request body
+interface SendEmailRequest {
+  to: string;
+  subject: string;
+  bodyHtml: string;
+  attachmentData?: string; // Base64 encoded file data
+  attachmentFilename?: string; // Filename for the attachment
+}
+
+/**
+ * Handles POST requests to send an email via Resend.
+ * Assumes RESEND_API_KEY is set in the environment variables.
+ */
+export async function POST(req: NextRequest) {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    return NextResponse.json({ error: 'RESEND_API_KEY not configured' }, { status: 500 });
+  }
+
   try {
-    const form = await req.formData()
+    const { 
+      to, 
+      subject, 
+      bodyHtml, 
+      attachmentData, 
+      attachmentFilename 
+    }: SendEmailRequest = await req.json();
 
-    const email = form.get("email") as string
-    const amount = form.get("amount") as string
-    const cards = form.get("cards") as string
-    const file = form.get("file") as File | null
-
-    const attachments = []
-
-    if (file) {
-      const buffer = Buffer.from(await file.arrayBuffer())
-      attachments.push({
-        filename: file.name,
-        content: buffer.toString("base64"),
-        type: file.type,
-        disposition: "attachment"
-      })
+    if (!to || !subject || !bodyHtml) {
+      return NextResponse.json({ error: 'Missing required email fields (to, subject, bodyHtml)' }, { status: 400 });
     }
 
-    await resend.emails.send({
-      from: "Prepaid Manager <orders@yourdomain.com>",
-      to: email,
-      subject: `New Prepaid Card Order`,
-      html: `
-        <h2>New Order</h2>
-        <p><strong>Amount:</strong> ${amount} LYD</p>
-        <p><strong>Cards:</strong> ${cards}</p>
-      `,
-      attachments
-    })
+    const attachments = attachmentData && attachmentFilename
+      ? [{
+          // Resend requires file data to be a Base64 encoded string
+          content: attachmentData,
+          filename: attachmentFilename,
+        }]
+      : [];
 
-    return NextResponse.json({ success: true })
-  } catch (error: any) {
-    console.error(error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    const resendPayload = {
+      from: 'Prepaid Manager <onboarding@resend.dev>', // Sender email as requested
+      to: [to],
+      subject: subject,
+      html: bodyHtml,
+      attachments: attachments,
+    };
+
+    // Simulate Resend API Call
+    const resendResponse = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(resendPayload),
+    });
+
+    if (!resendResponse.ok) {
+      const errorData = await resendResponse.json();
+      console.error('Resend API Error:', errorData);
+      return NextResponse.json({ 
+        error: 'Failed to send email via Resend', 
+        details: errorData 
+      }, { status: 500 });
+    }
+
+    const successData = await resendResponse.json();
+    return NextResponse.json({ message: 'Email sent successfully', data: successData });
+
+  } catch (error) {
+    console.error('Email sending error:', error);
+    return NextResponse.json({ error: 'Internal server error during email processing' }, { status: 500 });
   }
 }

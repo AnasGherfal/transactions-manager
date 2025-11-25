@@ -4,6 +4,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 // const inter = Inter({ subsets: ["latin"] });
+import { ThemeProvider } from "@/components/theme-provider"
+
 
 export const metadata: Metadata = {
   title: "Transactions Manager",
@@ -18,8 +20,16 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body >
-        {children}
-      </body>
+{/* 
+          <ThemeProvider
+            attribute="class"
+            defaultTheme="system"
+            enableSystem
+            disableTransitionOnChange
+          > */}
+            {children}
+          {/* </ThemeProvider> */}
+           </body>
     </html>
   );
 }
