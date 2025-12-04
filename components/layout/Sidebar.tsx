@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Home, Building2, Wallet, CreditCard, ClipboardList } from "lucide-react"
+import { Home, Building2, Wallet, CreditCard, ClipboardClock, Users} from "lucide-react"
 
 export function Sidebar() {
   const pathname = usePathname()
@@ -11,10 +11,13 @@ export function Sidebar() {
     { label: "Dashboard", href: "/home", icon: Home },
     { label: "Companies", href: "/companies", icon: Building2 },
     { label: "Transactions", href: "/transactions", icon: Wallet },
-    // You might also add /reports or /settings here later
+                    { label: "Team", href: "/team", icon: Users },
+
+        { label: "Logs", href: "/activity", icon: ClipboardClock },
+
+
   ]
 
-  // Helper to determine active state. The dashboard/home is often at '/' but the prompt uses '/home'.
   const isActive = (href: string) => {
     // Treat '/' and '/home' as active when on the dashboard page
     if (href === '/home' && (pathname === '/home' || pathname === '/')) {
