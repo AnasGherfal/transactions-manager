@@ -28,11 +28,7 @@
     "date-fns": "^4.1.0",
     "framer-motion": "^12.29.2",
     "lucide-react": "^0.554.0",
-<<<<<<< HEAD
     "next": "^16.1.6",
-=======
-    "next": "16.0.10",
->>>>>>> 0c0f3b6c401989bb87b6bc4f321afc221ac5e40c
     "next-themes": "^0.4.6",
     "react": "19.2.0",
     "react-dom": "19.2.0",
